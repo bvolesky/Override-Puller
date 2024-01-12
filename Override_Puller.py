@@ -4,364 +4,400 @@
 import os
 import xml.etree.ElementTree as ET
 
-file = ''
+# Global variables
+file = ""
 master = {}
 
 
-def getVertexKey(_root, _top_function, _source_key):
-    for obj in _root.findall(".//*[@vertexkey='{}']".format(_source_key)):
-        if parent_map[parent_map[parent_map[parent_map[parent_map[obj]]]]].tag == 'structure' and parent_map[parent_map[parent_map[parent_map[parent_map[parent_map[obj]]]]]] == _top_function:
-            return parent_map[parent_map[obj]].attrib['vertexkey']
+def get_vertex_key(root, top_function, source_key, parent_map):
+    """
+    Get the vertex key from the XML structure.
+    """
+    elements_with_vertexkey = root.findall(f".//*[@vertexkey='{source_key}']")
+
+    for element in elements_with_vertexkey:
+        current_element = element
+        for _ in range(5):  # Traverse 5 levels up
+            if current_element is None:
+                break
+            current_element = parent_map.get(current_element)
+
+        if current_element is not None and current_element.tag == "structure":
+            sixth_parent = parent_map.get(current_element)
+            if sixth_parent == top_function:
+                parent_of_element = parent_map.get(element)
+                return parent_of_element.attrib.get("vertexkey")
+
+    return None
 
 
-def PrettyPrint(_dict):
-    _lines = ''
-    for k, v in sorted(_dict.items()):
-        #print('\n{}'.format(k))
-        _lines += '{}\n\n'.format(k)
-        for kk, vv in sorted(v.items()):
-            #print('\t{}\n\t\t{}'.format(kk, '\n\t\t'.join(str(x) for x in sorted(vv))))
-            if vv:
-                _lines += '\t{}\n\t\t{}\n\n'.format(kk, '\n\t\t'.join(str(x) for x in sorted(vv)))
-            else:
-                _lines += '\t{}\n\n'.format(kk)
-        #print('----------------------------------------------------------')
-        _lines += '----------------------------------------------------------\n'
-    return _lines
+def pretty_print(nested_dict):
+    """
+    Create a formatted string representation of the nested dictionary.
+    """
+    lines = []
+    for key, sub_dict in sorted(nested_dict.items()):
+        lines.append(f"{key}\n")
+        for sub_key, values in sorted(sub_dict.items()):
+            formatted_values = "\n\t\t".join(str(value) for value in sorted(values)) if values else ""
+            lines.append(f"\t{sub_key}\n\t\t{formatted_values}\n")
+        lines.append("----------------------------------------------------------\n")
+
+    return "".join(lines)
 
 
-def getDependencyTree(_path):
-    version = ''
+def parse_dependency_block(dep_lines, start_index):
+    """
+    Parse a dependency block from the pom file lines.
+    """
+    dependency_info = {"groupId": "", "artifactId": "", "version": "", "type": ""}
+    index = start_index + 1
+    while "</dependency>" not in dep_lines[index]:
+        label = dep_lines[index].strip().split(">")[0].split("<")[-1]
+        if label in dependency_info:
+            dependency_info[label] = dep_lines[index].strip().split(">")[1].split("<")[0]
+        index += 1
+    return dependency_info
+
+
+def get_dependency_tree(path):
+    """
+    Get the dependency tree from the pom file.
+    """
+    dep_tree_dict = {}
     dependencies = {}
-    _dep_tree_dict = {}
-    with open(_path, 'r') as pom:
-        dep_lines = pom.readlines()
-    for index in range(len(dep_lines)):
-        if '<dependency>' in dep_lines[index] and 'com.cerner.pophealth.mappings.' in dep_lines[index + 1]:
-            groupId = ''
-            artifactId = ''
-            version = ''
-            type = ''
-            dep_record = {}
-            _index = index + 1
-            while '</dependency>' not in dep_lines[_index]:
-                label = dep_lines[_index].strip().split('>')[0].split('<')[-1]
-                if label == 'groupId':
-                    groupId = dep_lines[_index].strip().split('com.cerner.pophealth.mappings.')[-1].split('<')[0]
-                elif label == 'artifactId':
-                    artifactId = dep_lines[_index].strip().split('>')[1].split('<')[0]
-                elif label == 'version':
-                    version = dep_lines[_index].strip().split('>')[1].split('<')[0]
-                elif label == 'type':
-                    type = dep_lines[_index].strip().split('>')[1].split('<')[0]
-                _index += 1
+    try:
+        with open(path, "r") as pom:
+            dep_lines = pom.readlines()
+            for index, line in enumerate(dep_lines):
+                if "<dependency>" in line and "com.cerner.pophealth.mappings." in dep_lines[index + 1]:
+                    dep_info = parse_dependency_block(dep_lines, index)
+                    if dep_info["type"] == "mfd":
+                        group_id = dep_info["groupId"]
+                        dependencies[group_id] = {"dependency_mfd_name": dep_info["artifactId"], "version": dep_info["version"]}
+    except IOError as e:
+        print(f"Error reading file {path}: {e}")
+        return None
 
-            if type == 'mfd':
-                dep_record['dependency_mfd_name'] = artifactId
-                dep_record['version'] = version
+    repository_paths = [
+        "C:\\m2\\repository\\com\\cerner\\pophealth\\mappings",
+        "C:\\.m2\\repository\\com\\cerner\\pophealth\\mappings",
+    ]
+    for group_id, dep in dependencies.items():
+        for repo_path in repository_paths:
+            dependency_path = os.path.join(repo_path, group_id, dep["dependency_mfd_name"], dep["version"])
+            if handle_dependency_path(dependency_path, dep, dep_tree_dict, path):
+                break
 
-                if groupId not in dependencies.keys():
-                    dependencies[groupId] = []
-                dependencies[groupId] = dep_record
-    m2 = 'C:\\m2\\repository\\com\\cerner\\pophealth\\mappings'
-    dot_m2 = 'C:\\.m2\\repository\\com\\cerner\\pophealth\\mappings'
-    for k, v in dependencies.items():
-        dependency_path1 = 'C:\\m2\\repository\\com\\cerner\\pophealth\\mappings\\{}\\{}\\{}'.format(k, v['dependency_mfd_name'], v['version'])
-        dependency_path2 = 'C:\\.m2\\repository\\com\\cerner\\pophealth\\mappings\\{}\\{}\\{}'.format(k, v['dependency_mfd_name'], v['version'])
-        if os.path.exists(m2):
-            # CHECK IF DEP IS THERE
-            if os.path.exists(dependency_path1):
-                # ALREADY PULLED
-                print('\t{}-{} already exists, no need to pull'.format(v['dependency_mfd_name'], v['version']))
-                for dep_file in os.listdir(dependency_path1):
-                    if dep_file == v['dependency_mfd_name'] + '-' + v['version'] + '.mfd':
-                        dep = '{}\\{}'.format(dependency_path1, dep_file)
-                        tree = ET.parse(dep)
-                        _dep_root = tree.getroot()
-                        if version != '':
-                            _dep_tree_dict[_dep_root] = v['dependency_mfd_name'] + "-" + version
-                        else:
-                            _dep_tree_dict[_dep_root] = 'local'
-            # DEP IS NOT THERE
-            else:
-                wd = os.getcwd()
-                os.chdir('\\'.join(str(x) for x in _path.split('\\')[:-1]))
-                print('\t{}-{} not found, pulling dependencies...'.format(v['dependency_mfd_name'], v['version']))
-                mci = os.system('mvn midas:mapforce-env')
-                print(mci)
-                os.chdir(wd)
-                if mci == 0:
-                    if os.path.exists(dependency_path1):
-                        # ALREADY PULLED
-                        for dep_file in os.listdir(dependency_path1):
-                            if dep_file == v['dependency_mfd_name'] + '-' + v['version'] + '.mfd':
-                                dep = '{}\\{}'.format(dependency_path1, dep_file)
-                                tree = ET.parse(dep)
-                                _dep_root = tree.getroot()
-                                _dep_tree_dict[_dep_root] = v['dependency_mfd_name'] + "-" + version
-                else:
-                    print("COULD NOT COMPLETE mvn midas:mapforce-env command on {}\nTry to run the mvn clean install command on the master branch manually and see what went wrong".format(os.getcwd()))
-                    r = raw_input("Hit enter to continue...")
-                    quit()
-        elif os.path.exists(dot_m2):
-            # CHECK IF DEP IS THERE
-            if os.path.exists(dependency_path2):
-                # ALREADY PULLED
-                print('\t{}-{} already exists, no need to pull'.format(v['dependency_mfd_name'], v['version']))
-                for dep_file in os.listdir(dependency_path2):
-                    if dep_file == v['dependency_mfd_name'] + '-' + v['version'] + '.mfd':
-                        dep = '{}\\{}'.format(dependency_path2, dep_file)
-                        tree = ET.parse(dep)
-                        _dep_root = tree.getroot()
-                        if version != '':
-                            _dep_tree_dict[_dep_root] = v['dependency_mfd_name'] + "-" + version
-                        else:
-                            _dep_tree_dict[_dep_root] = 'local'
-            # DEP IS NOT THERE
-            else:
-                wd = os.getcwd()
-                os.chdir('\\'.join(str(x) for x in _path.split('\\')[:-1]))
-                print('\t{}-{} not found, pulling dependencies...'.format(v['dependency_mfd_name'], v['version']))
-                mci = os.system('mvn midas:mapforce-env')
-                print(mci)
-                os.chdir(wd)
-                if mci == 0:
-                    if os.path.exists(dependency_path2):
-                        # ALREADY PULLED
-                        for dep_file in os.listdir(dependency_path2):
-                            if dep_file == v['dependency_mfd_name'] + '-' + v['version'] + '.mfd':
-                                dep = '{}\\{}'.format(dependency_path2, dep_file)
-                                tree = ET.parse(dep)
-                                _dep_root = tree.getroot()
-                                _dep_tree_dict[_dep_root] = v['dependency_mfd_name'] + "-" + version
-                else:
-                    print("COULD NOT COMPLETE mvn midas:mapforce-env command on {}\nTry to run the mvn clean install command on the master branch manually and see what went wrong".format(os.getcwd()))
-                    r = raw_input("Hit enter to continue...")
-                    quit()
-
-    return _dep_tree_dict
+    return dep_tree_dict
 
 
-def getDependencies(_dep_tree_dict):
-    global lines
-    _dep_record = {}
-    for dep_root, dep_name in _dep_tree_dict.items():
-        parent_map = {c: p for p in dep_root.iter() for c in p}
+def handle_dependency_path(dependency_path, dep, dep_tree_dict, original_path):
+    """
+    Handle the dependency path for the tree.
+    """
+    if os.path.exists(dependency_path):
+        for dep_file in os.listdir(dependency_path):
+            if dep_file.endswith(".mfd"):
+                dep_full_path = os.path.join(dependency_path, dep_file)
+                tree = ET.parse(dep_full_path)
+                dep_root = tree.getroot()
+                dep_tree_dict[dep_root] = f"{dep['dependency_mfd_name']}-{dep['version']}"
+        return True
+    else:
+        pull_dependencies(original_path)
+        return False
+
+
+def pull_dependencies(path):
+    """
+    Pull dependencies using Maven.
+    """
+    try:
+        os.chdir(os.path.dirname(path))
+        mci = os.system("mvn midas:mapforce-env")
+        if mci != 0:
+            print("Error running mvn midas:mapforce-env command. Please check manually.")
+            input("Hit enter to continue...")
+            quit()
+    finally:
+        os.chdir(os.getcwd())
+
+
+def get_dependencies(dep_tree_dict):
+    """
+    Get dependencies from the dependency tree.
+    """
+    dep_record = {}
+    for dep_root, dep_name in dep_tree_dict.items():
+        parent_map = {child: parent for parent in dep_root.iter() for child in parent}
+
         for sources in dep_root.findall(".//*[@name='getKeyedValue']/sources"):
-            x = parent_map[parent_map[parent_map[parent_map[sources]]]]
-            source_key = sources[0].attrib['key']
-            command = ".//*[@vertexkey='" + source_key + "']"
-            for item in dep_root.findall(command):
-                if parent_map[parent_map[item]].tag == 'vertex':
-                    y = parent_map[parent_map[parent_map[parent_map[parent_map[parent_map[item]]]]]]
-                    if y.tag == 'component':
-                        vertex = parent_map[parent_map[item]]
-                        if vertex.tag == 'vertex':
-                            for component in dep_root.findall(".//*[@name='constant']"):
-                                if (
-                                        'key' in component[1][0].attrib
-                                        and 'vertexkey' in vertex.attrib
-                                        and component[1][0].attrib['key'] == vertex.attrib['vertexkey']
-                                        and x.attrib['name'] == y.attrib['name']
-                                        and 'value' in component[-1][0].attrib
-                                ):
-                                    for dep_component in dep_root.findall('./'):
-                                        function_name = parent_map[parent_map[parent_map[component]]].attrib['name']
-                                        library_name = parent_map[parent_map[parent_map[component]]].attrib['library']
-                                        if (
-                                                'name' in dep_component.attrib
-                                                and x.attrib['name'] == dep_component.attrib['name']
-                                                and x.attrib['library'] == dep_component.attrib['library']
-                                                and function_name == x.attrib['name']
-                                                and library_name == x.attrib['library']
-                                        ):
-                                            _dep_name = dep_name
-                                            dep_name += ' : {}'.format(x.attrib['library'])
-                                            if dep_name not in _dep_record.keys():
-                                                _dep_record[dep_name] = {}
-                                            if x.attrib['name'] not in _dep_record[dep_name].keys():
-                                                _dep_record[dep_name][x.attrib['name']] = []
-                                            _dep_record[dep_name][x.attrib['name']].append(component[-1][0].attrib['value'])
-                                            dep_name = _dep_name
-    return _dep_record
+            component_ancestor = get_ancestor(parent_map, sources, 4)
+            source_key = sources[0].attrib["key"]
+            vertex = find_vertex(dep_root, parent_map, source_key)
+
+            if vertex and component_ancestor.tag == "component":
+                for component in dep_root.findall(".//*[@name='constant']"):
+                    if valid_dependency(component, vertex, component_ancestor):
+                        update_dependency_record(dep_root, dep_record, dep_name, component, component_ancestor)
+
+    return dep_record
 
 
-def getOverrides(_local_root, _file, _dependency_dictionary=''):
-    global parent_map
-    dep_count = 0
+def get_ancestor(parent_map, node, levels):
+    """Get an ancestor of a given node in the XML tree at a specified level."""
+    ancestor = node
+    for _ in range(levels):
+        ancestor = parent_map.get(ancestor, None)
+        if ancestor is None:
+            break
+    return ancestor
+
+
+def find_vertex(dep_root, parent_map, source_key):
+    """Find a vertex in the dependency tree that matches a given source key."""
+    command = ".//*[@vertexkey='" + source_key + "']"
+    for item in dep_root.findall(command):
+        if parent_map[parent_map[item]].tag == "vertex":
+            return parent_map[parent_map[item]]
+    return None
+
+
+
+def valid_dependency(component, vertex, component_ancestor):
+    """Check if a component is a valid dependency."""
+    return (
+        "key" in component[1][0].attrib
+        and "vertexkey" in vertex.attrib
+        and component[1][0].attrib["key"] == vertex.attrib["vertexkey"]
+        and component_ancestor.attrib["name"] == component[1][0].attrib["name"]
+        and "value" in component[-1][0].attrib
+    )
+
+
+
+def update_dependency_record(dep_root, dep_record, dep_name, component, component_ancestor):
+    """Update the dependency record with information about a valid dependency."""
+    function_name = get_ancestor(parent_map, component, 3).attrib["name"]
+    library_name = get_ancestor(parent_map, component, 3).attrib["library"]
+
+    for dep_component in dep_root.findall("./"):
+        if (
+            "name" in dep_component.attrib
+            and component_ancestor.attrib["name"] == dep_component.attrib["name"]
+            and component_ancestor.attrib["library"] == dep_component.attrib["library"]
+            and function_name == component_ancestor.attrib["name"]
+            and library_name == component_ancestor.attrib["library"]
+        ):
+            formatted_dep_name = f"{dep_name} : {component_ancestor.attrib['library']}"
+            if formatted_dep_name not in dep_record:
+                dep_record[formatted_dep_name] = {}
+            if component_ancestor.attrib["name"] not in dep_record[formatted_dep_name]:
+                dep_record[formatted_dep_name][component_ancestor.attrib["name"]] = []
+            dep_record[formatted_dep_name][component_ancestor.attrib["name"]].append(
+                component[-1][0].attrib["value"]
+            )
+
+
+
+def get_overrides(local_root, file, dependency_dictionary=""):
+    """Process overrides within a local mapping and update the master record."""
+    global master, parent_map
+
+    parent_map = {c: p for p in local_root.iter() for c in p}
+    master = {}  # Assuming 'master' is a global dictionary
+    dep_count, override_count = 0, 0
+
+    # Process the main mapping logic
+    override_count += process_main_mappings(local_root, file)
+
+    # Process the dependencies if provided
+    if dependency_dictionary:
+        dep_count += process_dependencies(local_root, dependency_dictionary, file)
+
+    # Final calculations and logging
+    function_frequency, local_count = calculate_function_frequency(local_root)
+    check_override_counts(
+        dep_count, local_count, override_count, file)
+
+
+
+def process_main_mappings(local_root, file):
+    """Process overrides within the main mappings of a local mapping file."""
     override_count = 0
-    parent_map = {c: p for p in _local_root.iter() for c in p}
-    for sources in _local_root.findall(".//*[@name='getKeyedValue']/sources"):
-        top_function = parent_map[parent_map[parent_map[parent_map[sources]]]]
-        source_key = sources[0].attrib['key']
-        vertex_key = getVertexKey(_local_root, top_function, source_key)
-        if top_function.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-            for datapoint in top_function.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-                override = parent_map[parent_map[datapoint]][-1][0].attrib['value']
-                function_info = '{} : {}'.format(top_function.attrib['name'], 'local')
-                override_count += 1
-                if 'default' in function_info:
-                    function_info = '*MAIN MAPPING* : local'
-                if _file not in master.keys():
-                    master[_file] = {}
-                if function_info not in master[_file].keys():
-                    master[_file][function_info] = []
-                master[_file][function_info].append(override)
-        elif top_function.findall(".//targets/datapoint/[@key='{}']".format(vertex_key)):
-            for item in top_function.findall(".//targets/datapoint/[@key='{}']".format(vertex_key)):
-                component_name = parent_map[parent_map[parent_map[parent_map[parent_map[item]]]]].attrib['name']
-                component_library = parent_map[parent_map[parent_map[parent_map[parent_map[item]]]]].attrib['library']
-                for jj in parent_map[parent_map[item]][-1]:
-                    if jj.tag == 'parameter':
-                        function_input_name = jj.attrib['name']
-            for comp in _local_root.findall('./')[1][1][0]:
-                top = parent_map[_local_root.findall('./')[1][1]]
-                if 'name' in comp.attrib and 'library' in comp.attrib:
-                    if comp.attrib['name'] == component_name and comp.attrib['library'] == component_library:
-                        for subroot in comp[-1]:
-                            for element in subroot:
-                                if 'name' in element.attrib and element.attrib['name'] == function_input_name:
-                                    if 'inpkey' in element.attrib:
-                                        fxInputKey = element.attrib['inpkey']
-                                        vertex_key = getVertexKey(_local_root, top, fxInputKey)
-            if top.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-                for datapoint in top.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-                    override = parent_map[parent_map[datapoint]][-1][0].attrib['value']
-                    function_info = '{} : {}'.format(top.attrib['name'], 'local')
-                    override_count += 1
-                    if 'default' in function_info:
-                        function_info = '*MAIN MAPPING* : local'
-                    if _file not in master.keys():
-                        master[_file] = {}
-                    if function_info not in master[_file].keys():
-                        master[_file][function_info] = []
-                    master[_file][function_info].append(override)
-            else:
-                for fx in _local_root.findall('./'):
-                    if fx.tag == 'component':
-                        for subchildren in fx[-1][0]:
-                            if 'name' in subchildren.attrib and 'library' in subchildren.attrib and subchildren.attrib['name'] == component_name and subchildren.attrib['library'] == component_library:
-                                for rooter in subchildren[-1]:
-                                    for entries in rooter:
-                                        if entries.tag == 'entry' and 'inpkey' in entries.attrib and 'name' in entries.attrib and entries.attrib['name'] == function_input_name:
-                                            vertex_key = getVertexKey(_local_root,fx,entries.attrib['inpkey'])
-                                            if fx.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-                                                for datapoint in fx.findall(".//*[@name='constant']/targets/datapoint/[@key='{}']".format(vertex_key)):
-                                                    override = parent_map[parent_map[datapoint]][-1][0].attrib['value']
-                                                    function_info = '{} : {}'.format(fx.attrib['name'], 'local')
-                                                    override_count += 1
-                                                    if 'default' in function_info:
-                                                        function_info = '*MAIN MAPPING* : local'
-                                                    if _file not in master.keys():
-                                                        master[_file] = {}
-                                                    if function_info not in master[_file].keys():
-                                                        master[_file][function_info] = []
-                                                    master[_file][function_info].append(override)
+    for sources in local_root.findall(".//*[@name='getKeyedValue']/sources"):
+        top_function = get_ancestor(parent_map, sources, 4)
+        source_key = sources[0].attrib["key"]
+        vertex_key = get_vertex_key(local_root, top_function, source_key)
+        override_count += process_vertex_key(top_function, vertex_key, file)
+    return override_count
 
-    if _dependency_dictionary:
-        for x in _local_root.findall('.'):
-            for local_function in x[1][-1][0]:
-                for split, v in _dependency_dictionary.items():
-                    dep_name = split.split(' : ')[0]
-                    dep_library = split.split(' : ')[-1]
-                    for dep_function_name, override_list in v.items():
-                        for dep_override in override_list:
-                            if local_function.attrib['name'] == dep_function_name and local_function.attrib['library'] == dep_library:
-                                dep_count += 1
-                                override_count += 1
-                                function_info = '{} : {}'.format(dep_function_name, dep_name)
-                                if _file not in master.keys():
-                                    master[_file] = {}
-                                if function_info not in master[_file].keys():
-                                    master[_file][function_info] = []
-                                master[_file][function_info].append(dep_override)
-    function_frequency = 0
-    f_freq = {}
-    for item in _local_root.findall(".//*[@name='getKeyedValue']/sources"):
-        f_freq[parent_map[parent_map[parent_map[parent_map[item]]]].attrib['name']] = 0
-        for row in _local_root[1][-1][0]:
-            if 'name' in row.attrib and 'library' in row.attrib:
-                if row.attrib['name'] == parent_map[parent_map[parent_map[parent_map[item]]]].attrib['name'] and row.attrib['library'] == parent_map[parent_map[parent_map[parent_map[item]]]].attrib['library']:
-                    function_frequency += 1
-                    f_freq[parent_map[parent_map[parent_map[parent_map[item]]]].attrib['name']] = function_frequency
 
-    local_count = 0
-    info = ''
-    if len(f_freq.keys()) == 1 and 'defaultmap' in f_freq.keys()[0]:
-        local_count = len(_local_root.findall(".//*[@name='getKeyedValue']/sources"))
 
-    else:
-        # ADJUST OVERRIDE FREQUENCY
-        for k,v in f_freq.items():
-            if 'defaultmap' not in k and v == 0:
-                f_freq[k] = 1
+def process_dependencies(local_root, dependency_dictionary, file):
+    """Process overrides within the dependencies of a local mapping file."""
+    dep_count = 0
+    for local_function in local_root.iter("component"):
+        for split, override_list in dependency_dictionary.items():
+            dep_name, dep_library = split.split(" : ")
+            if (
+                local_function.attrib["name"] in override_list
+                and local_function.attrib["library"] == dep_library
+            ):
+                dep_count += 1
+                update_master_record(
+                    file, f'{dep_name} : {local_function.attrib["name"]}', override_list
+                )
+    return dep_count
 
-        for k,v in f_freq.items():
-            if v > 1:
-                info += '\t{} function contains getKeyedValue, and is called {} times in mapping\n'.format(k,v)
-            local_count += v
-    print('\t\t\tDEPENDENCY COUNT {} + LOCAL COUNT {} = OVERRIDE COUNT: {}'.format(dep_count, local_count, override_count))
-    #
-    # # Create output
+
+
+def process_vertex_key(top_function, vertex_key, file):
+    """Process overrides for a specific vertex key within a local mapping."""
+    override_count = 0
+    for datapoint in top_function.findall(
+        f".//*[@name='constant']/targets/datapoint/[@key='{vertex_key}']"
+    ):
+        override = parent_map[parent_map[datapoint]][-1][0].attrib["value"]
+        function_info = f"{top_function.attrib['name']} : local"
+        override_count += 1
+        update_master_record(file, function_info, [override])
+    return override_count
+
+
+
+def calculate_function_frequency(local_root):
+    """Calculate the frequency of each function in the local mapping."""
+    function_frequency = {}
+    for item in local_root.findall(".//*[@name='getKeyedValue']/sources"):
+        function_name = get_ancestor(parent_map, item, 4).attrib["name"]
+        function_frequency[function_name] = function_frequency.get(function_name, 0) + 1
+    local_count = sum(function_frequency.values())
+    return function_frequency, local_count
+
+
+
+def check_override_counts(
+    dep_count, local_count, override_count, file):
+    """Check if the override counts match the expected counts and update the master record accordingly."""
+    global master
+
     if override_count != dep_count + local_count:
-        print('\t\t\t\t[WARN] OVERRIDES STILL EXIST IN MAPPING NOT LISTED HERE')
-        if _file not in master.keys():
-            master[_file] = {}
-        if 'OVERRIDES STILL EXIST IN MAPPING NOT LISTED HERE' not in master[_file].keys():
-            if info != '':
-                master[_file]['!!! OVERRIDES STILL EXIST IN MAPPING NOT LISTED HERE !!!\n' + info] = []
-            else:
-                master[_file]['!!! OVERRIDES STILL EXIST IN MAPPING NOT LISTED HERE !!!'] = []
+        update_master_record(
+            file, "!!! OVERRIDES STILL EXIST IN MAPPING NOT LISTED HERE !!!", []
+        )
     elif dep_count == 0 and local_count == 0 and override_count == 0:
-        print('\t\t\t\t[RESULTS] NO MATCHING OVERRIDES DETECTED')
-        if _file not in master.keys():
-            master[_file] = {}
-        if 'NO MATCHING OVERRIDES DETECTED' not in master[_file].keys():
-            master[_file]['NO MAPPING OVERRIDES DETECTED'] = []
+        update_master_record(file, "NO MAPPING OVERRIDES DETECTED", [])
     else:
-        print('\t\t\t\t[RESULTS] FOUND OVERRIDES!')
+        print("\t\t\t\t[RESULTS] FOUND OVERRIDES!")
+
+
+def update_master_record(file, key, values):
+    """Update the master record with the provided key and values."""
+    global master
+
+    if file not in master:
+        master[file] = {}
+    if key not in master[file]:
+        master[file][key] = []
+    master[file][key].extend(values)
+
+
+def get_ancestor(parent_map, node, levels):
+    """Get the ancestor of a node in the XML tree."""
+    ancestor = node
+    for _ in range(levels):
+        ancestor = parent_map.get(ancestor, None)
+        if ancestor is None:
+            break
+    return ancestor
+
+
+def process_directory(walk_path, walk_files):
+    """
+    Process each directory found in os.walk.
+    """
+    if "pom.xml" in walk_files and any(file.endswith(".mfd") for file in walk_files):
+        handle_pom_and_mfd(walk_path, walk_files)
+    elif "pom.xml" not in walk_files and any(file.endswith(".mfd") for file in walk_files):
+        handle_mfd_only(walk_path, walk_files)
+
+
+
+def handle_pom_and_mfd(walk_path, walk_files):
+    """
+    Handle directories containing both pom.xml and .mfd files.
+    """
+    print(f"\n[INFO] DEPENDENCY CHECK NEEDED FOR {os.path.basename(walk_path)}")
+    pom_path = os.path.join(walk_path, "pom.xml")
+    for file in walk_files:
+        if file.endswith(".mfd"):
+            mfd_path = os.path.join(walk_path, file)
+            process_files(pom_path, mfd_path)
+
+def handle_mfd_only(walk_path, walk_files):
+    """
+    Handle directories containing only .mfd files.
+    """
+    print(f"[INFO] NO DEPENDENCY PULL NEEDED FOR {os.path.basename(walk_path)}")
+    for file in walk_files:
+        if file.endswith(".mfd"):
+            mfd_path = os.path.join(walk_path, file)
+            root = ET.parse(mfd_path).getroot()
+            get_overrides(root, file)
+
+
+def process_files(pom_path, mfd_path):
+    """
+    Process the files for dependency and override information.
+    """
+    dependency_tree = get_dependency_tree(pom_path)
+    root = ET.parse(mfd_path).getroot()
+
+    if not dependency_tree:
+        handle_no_dependencies(root, mfd_path)
+        return
+
+    dependencies = get_dependencies(dependency_tree)
+    if not dependencies:
+        handle_no_dependencies(root, mfd_path)
+        return
+
+    handle_dependencies(root, mfd_path, dependencies)
+
+def handle_no_dependencies(root, mfd_path):
+    """
+    Handle the case when no dependencies are found.
+    """
+    print(f"\t\tGetting overrides from {os.path.basename(mfd_path)}")
+    get_overrides(root, os.path.basename(mfd_path))
+
+def handle_dependencies(root, mfd_path, dependencies):
+    """
+    Handle dependencies for overrides.
+    """
+    for key in dependencies:
+        if not key.startswith("local"):
+            print(f"\t\tGetting overrides from {key}")
+            get_overrides(root, os.path.basename(mfd_path), dependencies)
+
+
+def pretty_print_and_write_output():
+    """
+    Pretty print the results and write to an output file.
+    """
+    with open("override_results.txt", "w") as outputfile:
+        if master:
+            outputfile.write(pretty_print(master))
+        else:
+            outputfile.write("NO MFD FOUND IN DIRECTORY")
 
 
 print("Grabbing overrides...")
-for walk_path, walk_dir, walk_file in os.walk(".", topdown=False):
-    if 'pom.xml' in ' '.join(str(x) for x in walk_file) and '.mfd' in ' '.join(str(x) for x in walk_file):
-        # POM AND MFD IN DIRECTORY
-        print('\n[INFO] DEPENDENCY CHECK NEEDED FOR {}'.format(walk_path.split('\\')[-1]))
-        for file in walk_file:
-            if file == 'pom.xml':
-                for file2 in walk_file:
-                    if '.mfd' in file2:
-                        dependencyTree = getDependencyTree('{}\\{}\\{}'.format(os.getcwd(), walk_path[2:], file))
-                        root = ET.parse('{}\\{}\\{}'.format(os.getcwd(), walk_path[2:], file2)).getroot()
-                        if dependencyTree:
-                            dependency = getDependencies(dependencyTree)
-                            if dependency != {}:
-                                for k in dependency.keys():
-                                    if k.split(':')[0].strip() != 'local':
-                                        print('\t\tGetting overrides from {}'.format(k))
-                                        getOverrides(root, file2, dependency)
-                            else:
-                                getOverrides(root, file2)
-                        else:
-                            # HAS POM BUT NO DEPENDENCIES
-                            print('\t\tGetting overrides from {}'.format(file2))
-                            getOverrides(root, file2)
+for walk_path, _, walk_files in os.walk(".", topdown=False):
+    process_directory(walk_path, walk_files)
 
-    elif 'pom.xml' not in ' '.join(str(x) for x in walk_file) and '.mfd' in ' '.join(str(x) for x in walk_file):
-        # ONLY MFD IN DIRECTORY
-        print('[INFO] NO DEPENDENCY PULL NEEDED FOR {}'.format(walk_path.split('\\')[-1]))
-        for file in walk_file:
-            if '.mfd' in file:
-                local_root = ET.parse('{}\\{}\\{}'.format(os.getcwd(), walk_path[2:], file)).getroot()
-                getOverrides(local_root, file)
-
-# Write output
-with open("override_results.txt", 'w') as outputfile:
-    if file != "":
-        outputfile.writelines(PrettyPrint(master))
-    else:
-        outputfile.write("NO MFD FOUND IN DIRECTORY")
-
+pretty_print_and_write_output()
 print("SUCCESS!")
-# Start file
 os.startfile("override_results.txt")
