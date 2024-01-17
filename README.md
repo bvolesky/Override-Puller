@@ -10,3 +10,9 @@ As I successfully implemented tree traversal, I gained insights into efficiently
 One of the significant challenges I encountered was the possibility of nodes sharing the same name across various files, potentially referencing different entities. To address this issue, I devised a method to generate unique IDs by combining the node ID, the file location it was in, and the node name. In moments of difficulty, I took the proactive approach of creating diagrams and meticulously tracking vertex keys and target keys across all nodes and references.
 
 By pausing to reflect on the overall concept and breaking down the problem into manageable steps, I was able to gain a comprehensive understanding of the task at hand. This, in turn, allowed me to tackle each issue methodically and ultimately achieve successful solution.
+
+## Usage
+1. Install Python from [Python Downloads](https://www.python.org/downloads/).
+2. Clone the Repository - ```git clone https://github.com/bvolesky/Override-Puller.git```
+3. Navigate to the Repository - ```cd <repository_folder>/Override-Puller```
+5. Run the App - ```python Override-Puller.py```
